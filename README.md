@@ -4,8 +4,17 @@ A Swift package that talks Logitech's HID++ 2.0 protocol to a mouse on a Bolt (o
 get what the system hides — the MX Master 4's haptic thumb panel, gesture and SmartShift buttons, the high-resolution
 thumb wheel, Precision Scroll on the main wheel, and haptic feedback — without Logi Options+. It reports raw facts
 ("button X pressed at T", "thumb wheel turned N steps") and plays haptic patterns on request; what they mean is up to
-the app (Loupe, FrameScrub). macOS 15+, Swift 6, no dependencies, GPL-3.0. Hardware notes:
-`docs/hardware-notes.md`.
+the app (Loupe, FrameScrub). No dependencies. Hardware notes (in Russian): `docs/hardware-notes.md`.
+
+Requirements: macOS 15+, swift-tools 6.0, Swift 6 language mode. License: GPL-3.0 (see [License](#license)).
+
+**Contents:** [API in ten lines](#api-in-ten-lines) · [Events](#events) · [Devices](#devices) ·
+[Foreground rule](#foreground-rule) · [Watching](#watching-hear-a-button-without-taking-it) ·
+[Precision Scroll](#precision-scroll) · [SmartShift](#smartshift) · [Software ID per process](#software-id-per-process) ·
+[Receiver notifications](#receiver-notifications) · [After a crash](#after-a-crash) · [logi-probe](#logi-probe) ·
+[Haptic patterns](#haptic-patterns) · [Haptic strength and panel force](#haptic-strength-and-panel-force) ·
+[Low level: `HIDPPChannel` and `HIDPPTransport`](#low-level-hidppchannel-and-hidpptransport) ·
+[Installation](#installation) · [Issues and contributions](#issues-and-contributions) · [License](#license)
 
 ```sh
 swift build
@@ -39,6 +48,49 @@ One `LogiMouse` per process. Call `releaseAllSync()` before dropping it while th
 turn the feature off): `deinit` releases nothing, and the thumb wheel and SmartShift button would stay dead in every app
 until the mouse sleeps. `releaseAll()` (asynchronous) is for an active app or a manual cure only: called while inactive
 it releases the controls this app wants, and so takes them from the app in the foreground if it diverted them too.
+
+## Events
+
+`LogiMouse` is `@MainActor`: create it, configure it and read its state on the main actor. `events` is an
+`AsyncStream<MouseEvent>`; iterate it once:
+
+```swift
+Task { @MainActor in
+    for await event in mouse.events {
+        switch event {
+        case .connected: print("mouse ready")           // after setup: controls read, wanted state applied
+        case .disconnected: print("mouse gone")         // switched off, out of range, receiver unplugged
+        case .pressed(let cid, let time): print("down", cid.rawValue, time)
+        case .released(let cid, _): print("up", cid.rawValue)
+        case .thumbWheel(let delta, _, let phase, _): print("thumb wheel", delta, phase)
+        case .highResolutionWheel(let on): print("Precision Scroll", on)
+        case .wheelMode(let mode, let byButton): print("wheel mode", mode, byButton)
+        }
+    }
+}
+```
+
+`.connected` follows every setup of a mouse (the first one and each reconnect); before `.disconnected`, held
+controls get `.released`. `isConnected`, `controls`, `watching`, `stepsPerRevolution`, `hapticStrength`,
+`panelForce`, `isHighResolution` and `wheelMode` hold the current state.
+
+## Devices
+
+Tested: the **MX Master 4 on a Logi Bolt receiver** (`046d:c548`), by hand and by `LOGI_HARDWARE=1 swift test`. That is
+the only device the package has been run against.
+
+What the code does with other hardware, untested:
+
+- It opens the HID++ vendor collection (usage page `0xFF00`, usage 1) of any Logitech (`0x046D`) receiver and pings
+  receiver slots 1–6, so a Unifying receiver is expected to work the same way. A mouse connected directly over
+  Bluetooth or USB (no receiver slot) is not looked for.
+- It binds the first device with REPROG_CONTROLS_V4 (`0x1B04`) that also has haptics (`0x19B0`) or a thumb wheel
+  (`0x2150`); failing that, the first with `0x1B04` alone. Each feature is used only if the device reports it (thumb
+  wheel, Hi-Res Wheel `0x2121`, SmartShift `0x2111`, Force Sensing Button `0x19C0`), so another HID++ 2.0 mouse
+  may work in part; nothing in the package is known to work on one.
+- The CIDs in `CID` and the haptic pattern list are those of the MX Master 4.
+
+`swift run logi-probe list` shows what a given receiver and device report.
 
 ## Foreground rule
 
@@ -243,6 +295,10 @@ Master 4 on 2026-10-16. The "use" column is what the name suggests and how the u
 | 0x0D | `.jingle` | little tune |
 | 0x0E | `.ringing` | ringing |
 
+`HapticPattern.all` lists them; `HapticPattern(_:)` looks one up by number and `HapticPattern(named:)` by name (any case;
+spaces, hyphens or underscores: `"whisper-collision"`, `"Whisper Collision"`), for patterns kept in config files
+(`configName` gives the hyphenated form back). `HapticChoice` parses a whole `haptic-*` config value.
+
 **Strength** is one setting of the mouse, 0–100 (`0x19B0` function 1 reads `enabled strength`, function 2 writes it;
 Logi Options+ offers Low 25 / Medium 50 / High 75 / Maximum 100; a mouse whose function-1 byte 2 bit 0 is set knows only
 those four). The user's mouse is set to 35. See below for how the package writes it.
@@ -276,6 +332,61 @@ Try them with `logi-probe force [value]` and `logi-probe strength [0-100]` (dire
 and `logi-probe haptic <N> <strength>` (a strong play through `LogiMouse`); `force 4749` and `strength 35` put the
 user's mouse back as it was.
 
+## Low level: `HIDPPChannel` and `HIDPPTransport`
+
+For a feature `LogiMouse` does not wrap, talk HID++ yourself. `HIDPPChannel` (an actor) matches replies to requests,
+maps error replies to `HIDPPError`, caches feature indices and fans unsolicited reports out:
+
+- `ping(device:)`, `discover()` (slots 1–6 that answer), `featureIndex(_:device:)`, `forget(device:)`;
+- `call(_:device:function:params:echo:)`: a feature by its ID, short or long report by the params' size, returns the
+  reply's params; `request(_:echo:)` / `post(_:)` for a hand-built `HIDPPReport` (`.short(…)`, `.long(…)`);
+- `readRegister(device:address:)` / `writeRegister(device:address:value:)` for HID++ 1.0 registers;
+- `notifications`: a new `AsyncStream<HIDPPNotification>` per access (`.feature(…)`, `.connection(device:linked:)`).
+
+```swift
+import LogiHIDPP
+
+for await receiver in IOKitTransport.receivers() {
+    let channel = HIDPPChannel(transport: receiver)
+    for device in await channel.discover() {
+        let version = try await channel.ping(device: device)
+        let params = try await channel.call(Haptics.featureID, device: device, function: 1)   // read the haptic config
+        print(receiver.productName, device, version, Haptics.config(from: params))
+    }
+    break
+}
+```
+
+A channel stamps the process's software ID (`HIDPPSoftwareID.process`) on its requests; if a `LogiMouse` in the same
+process talks to the same receiver at the same time, give the channel another one (`softwareID:`).
+
+`HIDPPTransport` is what a channel reads and writes: `send(_:)` and `events` (`TransportEvent.report(_:at:)` or
+`.removed`). `IOKitTransport` is the hardware one; implement the protocol for a mock or another transport and pass it
+to `HIDPPChannel(transport:)`:
+
+```swift
+import LogiHIDPP
+
+final class ScriptedTransport: HIDPPTransport {
+    let events: AsyncStream<TransportEvent>
+    private let continuation: AsyncStream<TransportEvent>.Continuation
+    private let replies: [[UInt8]: [UInt8]]   // request bytes → reply bytes (with the channel's software ID)
+
+    init(replies: [[UInt8]: [UInt8]]) {
+        (events, continuation) = AsyncStream.makeStream(of: TransportEvent.self)
+        self.replies = replies
+    }
+
+    func send(_ report: HIDPPReport) throws {
+        if let bytes = replies[report.bytes], let reply = HIDPPReport(bytes: bytes) {
+            continuation.yield(.report(reply, at: 0))
+        }
+    }
+}
+```
+
+`LogiMouse` itself always uses `IOKitTransport`; the package's own tests drive it through an internal initialiser.
+
 ## Installation
 
 ```swift
@@ -288,3 +399,14 @@ dependencies: [.product(name: "LogiHIDPP", package: "LogiHIDPP")]
 
 Used by [Loupe](https://github.com/ampire5/Loupe) and [FrameScrub](https://github.com/ampire5/FrameScrub).
 
+## Issues and contributions
+
+Bug reports and pull requests are welcome at [github.com/ampire5/LogiHIDPP/issues](https://github.com/ampire5/LogiHIDPP/issues).
+Reports from other Logitech mice and receivers are especially useful: please include the output of
+`swift run logi-probe list`. Run `swift test` before sending a change.
+
+## License
+
+GPL-3.0 — see [LICENSE](LICENSE). Unlike its MIT-licensed sibling packages (HomeScreenKit, InfoPanelKit, SettingsKit,
+StashKit), LogiHIDPP is copyleft: an app that links it and is distributed must be distributed under GPL-3.0-compatible
+terms.
