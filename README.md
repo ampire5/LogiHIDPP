@@ -275,3 +275,16 @@ app asks**; neither is bound to the foreground rule.
 Try them with `logi-probe force [value]` and `logi-probe strength [0-100]` (direct writes, confirmed and read back)
 and `logi-probe haptic <N> <strength>` (a strong play through `LogiMouse`); `force 4749` and `strength 35` put the
 user's mouse back as it was.
+
+## Installation
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/ampire5/LogiHIDPP.git", from: "0.1.0"),
+],
+// in your target:
+dependencies: [.product(name: "LogiHIDPP", package: "LogiHIDPP")]
+```
+
+Used by [Loupe](https://github.com/ampire5/Loupe) and [FrameScrub](https://github.com/ampire5/FrameScrub).
+
