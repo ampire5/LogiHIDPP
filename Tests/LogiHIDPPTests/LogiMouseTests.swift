@@ -1168,7 +1168,9 @@ private func settle() async {
         fake.script(MX4.readControlCount, replies: [bytes(0x11, MX4.device, 0xff, MX4.reprog, 0x0a, 0x05)])
 
         fake.push(Fixtures.connectionUp)
-        #expect(await eventually { rig.mouse.watching.isEmpty && rig.clock.sleeperCount >= 1 })
+        // The retry's sleep, not the reapply the first setup left pending: advancing before the retry sleeps would
+        // leave it waiting for good.
+        #expect(await eventually { rig.mouse.watching.isEmpty && rig.clock.hasSleeper(for: LogiMouse.setupRetryDelay) })
 
         // The analytics are still on in the mouse: a press during the re-setup is heard and confirms the control.
         fake.push(Fixtures.backPressedAnalytics)
@@ -1191,7 +1193,9 @@ private func settle() async {
         fake.script(MX4.readControlCount, replies: [bytes(0x11, MX4.device, 0xff, MX4.reprog, 0x0a, 0x05)])
 
         fake.push(Fixtures.connectionUp)
-        #expect(await eventually { rig.mouse.watching.isEmpty && rig.clock.sleeperCount >= 1 })
+        // The retry's sleep, not the reapply the first setup left pending: advancing before the retry sleeps would
+        // leave it waiting for good.
+        #expect(await eventually { rig.mouse.watching.isEmpty && rig.clock.hasSleeper(for: LogiMouse.setupRetryDelay) })
         let ons = fake.count(MX4.watch(.back))
         fake.script(MX4.readControlCount, replies: [MX4.controlCountReply])
         rig.clock.advance(by: .seconds(5))
@@ -1666,7 +1670,9 @@ private func settle() async {
         #expect(fake.count(MX4.release(.hapticPanel)) == 0)   // nothing is written during setup
         fake.push(MX4.controlCountReply)                       // the re-setup goes on
 
-        #expect(await eventually { fake.count(MX4.release(.hapticPanel)) == 1 })
+        // Sent, and its reply in: until then the control still counts as diverted, and releaseAllSync would (rightly)
+        // send the release again.
+        #expect(await eventually { fake.count(MX4.release(.hapticPanel)) == 1 && rig.mouse.divertedInMouse.isEmpty })
         rig.mouse.releaseAllSync()
         #expect(fake.count(MX4.release(.hapticPanel)) == 1)   // released once: nothing left to release at exit
     }
