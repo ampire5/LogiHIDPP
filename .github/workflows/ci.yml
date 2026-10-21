@@ -1,18 +1,32 @@
-name: CI
+name: CI (LTS, Intel)
 
+# The lts/macos26 line: macOS 26 on Intel Macs (LTS.md). GitHub has no Intel runner with macOS 26, so the job runs
+# on the Apple Silicon macos-26 image with every step under Rosetta: the toolchain builds and tests x86_64 natively.
 on:
   push:
-    branches: [main]
+    branches: [lts/macos26]
   pull_request:
+
+defaults:
+  run:
+    shell: arch -x86_64 /bin/bash -eo pipefail {0}
 
 jobs:
   test:
-    runs-on: xcode-27
-    timeout-minutes: 20
+    runs-on: macos-26
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: Rosetta and Xcode 26
+        shell: bash
+        run: |
+          /usr/bin/pgrep -q oahd || sudo softwareupdate --install-rosetta --agree-to-license
+          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
       - name: Toolchain
-        run: swift --version
+        run: |
+          uname -m
+          swift --version
       - name: Build
         run: swift build
       - name: Test
