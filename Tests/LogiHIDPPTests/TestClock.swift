@@ -32,6 +32,15 @@ final class TestClock: Clock, Sendable {
     /// Sleepers waiting for a later instant.
     var sleeperCount: Int { state.withLock { $0.sleepers.count } }
 
+    /// Whether a sleeper waits until exactly `delay` after now: tells one sleep from others pending at the same time
+    /// (a re-setup's retry from the reapply that the first setup left waiting).
+    func hasSleeper(for delay: Duration) -> Bool {
+        state.withLock { state in
+            let deadline = state.now.advanced(by: delay)
+            return state.sleepers.values.contains { $0.deadline == deadline }
+        }
+    }
+
     func sleep(until deadline: Instant, tolerance: Duration?) async throws {
         let id = state.withLock { state in
             state.nextID += 1
