@@ -178,6 +178,8 @@ public final class LogiMouse {
     private var links: [Int: Link] = [:]
     /// The mouse this object is bound to (found, possibly not yet set up or currently off).
     private var session: Session?
+    /// Tests: the controls the mouse may still have diverted by us (`Session.divertedInMouse`).
+    var divertedInMouse: Set<CID> { session?.divertedInMouse ?? [] }
     /// Bumped whenever the connection state changes (setup started, link lost, receiver removed); an async step that
     /// finds it changed stops without touching state.
     private var epoch = 0
