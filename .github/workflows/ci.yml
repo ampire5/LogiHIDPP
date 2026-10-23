@@ -17,3 +17,29 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+
+  # Intel Macs stop at macOS 26, and the apps ship an x86_64 build from main for them: the package must build and pass
+  # with Xcode 26 on x86_64 too. GitHub has no Intel runner with macOS 26, so the job runs on the Apple Silicon
+  # macos-26 image with every step under Rosetta: the toolchain builds and tests x86_64 natively.
+  test-x86_64:
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: arch -x86_64 /bin/bash -eo pipefail {0}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rosetta and Xcode 26
+        shell: bash
+        run: |
+          /usr/bin/pgrep -q oahd || sudo softwareupdate --install-rosetta --agree-to-license
+          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+      - name: Toolchain
+        run: |
+          uname -m
+          swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
