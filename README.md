@@ -1,5 +1,7 @@
 # LogiHIDPP
 
+Developer guide: [architecture and code map](docs/architecture.md).
+
 A Swift package that talks Logitech's HID++ 2.0 protocol to a mouse on a Bolt (or Unifying) receiver, so macOS apps
 get what the system hides — the MX Master 4's haptic thumb panel, gesture and SmartShift buttons, the high-resolution
 thumb wheel, Precision Scroll on the main wheel, and haptic feedback — without Logi Options+. It reports raw facts
