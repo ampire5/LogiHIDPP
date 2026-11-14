@@ -51,6 +51,17 @@ struct HardwareTests {
         #expect(mouse.controls.contains { $0.cid == .hapticPanel })
     }
 
+    @MainActor @Test func batteryStatusIsRead() async throws {
+        let mouse = LogiMouse(hiResMarker: MemoryHiResMarker(), wheelModeMarker: MemoryWheelModeMarker())
+        mouse.start()
+        defer { mouse.releaseAllSync() }
+        try await waitConnected(mouse)
+
+        let battery = try #require(await mouse.readBatteryStatus(), "no Unified Battery percentage received")
+        #expect((0...100).contains(battery.percent))
+        print("Battery: \(battery.percent)%, charging: \(battery.isCharging)")
+    }
+
     /// Read-only: setup reads the haptic strength and the panel force. The test asks for neither setting, so nothing
     /// is written to the mouse.
     @MainActor @Test func hapticStrengthAndPanelForceAreRead() async throws {

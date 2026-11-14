@@ -548,6 +548,22 @@ public final class LogiMouse {
         }
     }
 
+    /// Reads the percentage and charging state from the currently bound mouse.
+    /// Returns nil when the device lacks Unified Battery percentage support, the read fails, or the binding changes.
+    public func readBatteryStatus() async -> BatteryStatus? {
+        guard !terminated, let session, session.connected, !session.settingUp else { return nil }
+        let epoch = self.epoch
+        let channel = session.link.channel
+        let device = session.device
+        let feature: UInt16 = 0x1004   // Unified Battery
+        guard let capabilities = try? await channel.call(feature, device: device, function: 0),
+              capabilities[1] & 0x02 != 0, self.epoch == epoch, !terminated, !Task.isCancelled,
+              let status = try? await channel.call(feature, device: device, function: 1),
+              status[0] <= 100, self.epoch == epoch, !terminated, !Task.isCancelled else { return nil }
+        let charging = status[2]
+        return BatteryStatus(percent: Int(status[0]), isCharging: charging == 1 || charging == 2)
+    }
+
     /// Call when the Mac wakes from sleep (`follow(app:)` does it): makes sure every receiver reports links again
     /// (see "Receiver notifications" above), looks for the mouse if none is bound, and, while active, sends the wanted
     /// state again (now and 300 ms later; diverts are harmless to repeat), reading the hi-res and SmartShift wheel

@@ -16,7 +16,9 @@ applications' window/input dispatcher.
 
 `LogiMouse` is main-actor coordination; `HIDPPChannel` is an actor. IOKitTransport is Sendable with its own transport
 synchronization. Client intent → device coordinator → feature request → channel → transport → matching reply or
-notification → event delivery. Software ID and receiver/device addressing are part of matching, not display state.
+notification → event delivery. Software ID and receiver/device addressing are part of matching, not display state. The optional
+`LogiMouse.readBatteryStatus()` call reads Unified Battery on the bound device's channel and drops results when
+the connection epoch changes.
 
 ## Lifetime and correctness boundaries
 

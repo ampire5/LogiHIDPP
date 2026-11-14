@@ -274,6 +274,63 @@ private func settle() async {
 }
 
 @MainActor @Suite struct LogiMouseTests {
+    @Test func batteryStatusUsesTheBoundMouseAndReportsCharging() async throws {
+        let rig = Rig()
+        let fake = try await rig.connectedMouse()
+        fake.script(MX4.lookup(0x1004), replies: [MX4.lookupReply(9)])
+        fake.script([0x10, MX4.device, 9, 0x0a, 0, 0, 0],
+                    replies: [bytes(0x11, MX4.device, 9, 0x0a, 0x0f, 0x03)])
+        let statusRequest: [UInt8] = [0x10, MX4.device, 9, 0x1a, 0, 0, 0]
+        fake.script(statusRequest, replies: [bytes(0x11, MX4.device, 9, 0x1a, 73, 4, 2)])
+
+        let battery = try #require(await rig.mouse.readBatteryStatus())
+        #expect(battery.percent == 73)
+        #expect(battery.isCharging)
+        #expect(fake.count(statusRequest) == 1)
+
+        fake.push(Fixtures.connectionLost)
+        try #require(await eventually { !rig.mouse.isConnected })
+        #expect(await rig.mouse.readBatteryStatus() == nil)
+        #expect(fake.count(statusRequest) == 1)
+    }
+
+    @Test func batteryStatusRequiresASupportedPercentage() async throws {
+        let rig = Rig()
+        let fake = try await rig.connectedMouse()
+        fake.script(MX4.lookup(0x1004), replies: [MX4.lookupReply(9)])
+        let capabilities: [UInt8] = [0x10, MX4.device, 9, 0x0a, 0, 0, 0]
+        let statusRequest: [UInt8] = [0x10, MX4.device, 9, 0x1a, 0, 0, 0]
+        fake.script(capabilities, replies: [bytes(0x11, MX4.device, 9, 0x0a, 0x0f, 0x01)])
+        #expect(await rig.mouse.readBatteryStatus() == nil)
+        #expect(fake.count(statusRequest) == 0)
+
+        fake.script(capabilities, replies: [bytes(0x11, MX4.device, 9, 0x0a, 0x0f, 0x03)])
+        fake.script(statusRequest, replies: [bytes(0x11, MX4.device, 9, 0x1a, 255, 4, 0)])
+        #expect(await rig.mouse.readBatteryStatus() == nil)
+
+        fake.script(statusRequest, replies: [bytes(0x11, MX4.device, 9, 0x1a, 0, 1, 0)])
+        let empty = try #require(await rig.mouse.readBatteryStatus())
+        #expect(empty.percent == 0)
+        #expect(!empty.isCharging)
+    }
+
+    @Test func aBatteryReplyAfterDisconnectIsDiscarded() async throws {
+        let rig = Rig()
+        let fake = try await rig.connectedMouse()
+        fake.script(MX4.lookup(0x1004), replies: [MX4.lookupReply(9)])
+        fake.script([0x10, MX4.device, 9, 0x0a, 0, 0, 0],
+                    replies: [bytes(0x11, MX4.device, 9, 0x0a, 0x0f, 0x03)])
+        let statusRequest: [UInt8] = [0x10, MX4.device, 9, 0x1a, 0, 0, 0]
+
+        let read = Task { await rig.mouse.readBatteryStatus() }
+        try #require(await eventually { fake.count(statusRequest) == 1 })
+        fake.push(Fixtures.connectionLost)
+        try #require(await eventually { !rig.mouse.isConnected })
+        fake.push(bytes(0x11, MX4.device, 9, 0x1a, 73, 4, 0))
+
+        #expect(await read.value == nil)
+    }
+
     // MARK: - Discovery
 
     @Test func discoveryPicksSlotTwoAndEmitsConnected() async throws {
