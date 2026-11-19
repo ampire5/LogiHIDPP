@@ -94,6 +94,10 @@ What the code does with other hardware, untested:
 
 `swift run logi-probe list` shows what a given receiver and device report.
 
+### Battery status
+
+Call `await mouse.readBatteryStatus()` to get the current percentage and charging state from the bound device. The method returns `nil` if the device lacks HID++ Unified Battery percentage support, a read fails, or the binding changes during the read. Added in 0.1.2.
+
 ## Foreground rule
 
 Only the app in the foreground owns the mouse's buttons and thumb wheel. When the app becomes active the package diverts
